@@ -25,10 +25,14 @@ function assertWithinWorkspace(workspace: string, target: string): void {
  *
  * @param cwd - Session workspace directory.
  * @param target - Client-supplied absolute path.
+ * @param fullAccess - When true (danger-full-access), bypass workspace containment.
  * @returns The canonical absolute path used for the filesystem operation.
  */
-export async function ensureWorkspacePath(cwd: string, target: string): Promise<string> {
+export async function ensureWorkspacePath(cwd: string, target: string, fullAccess = false): Promise<string> {
   const absolute = requireAbsolute(target)
+  if (fullAccess) {
+    return resolveRealPath(absolute, 'target')
+  }
   const [realCwd, realTarget] = await Promise.all([
     resolveRealPath(cwd, 'workspace'),
     resolveRealPath(absolute, 'target'),
@@ -46,18 +50,21 @@ export async function ensureWorkspacePath(cwd: string, target: string): Promise<
  *
  * @param cwd - Session workspace directory.
  * @param target - Client-supplied absolute destination path.
+ * @param fullAccess - When true (danger-full-access), bypass workspace containment.
  * @returns A canonical path for an existing target or its nearest existing ancestor.
  */
-export async function ensureWorkspaceWritePath(cwd: string, target: string): Promise<string> {
+export async function ensureWorkspaceWritePath(cwd: string, target: string, fullAccess = false): Promise<string> {
   const absolute = requireAbsolute(target)
-  const realCwd = await resolveRealPath(cwd, 'workspace')
+  const realCwd = fullAccess ? undefined : await resolveRealPath(cwd, 'workspace')
   let existingPath = absolute
   const missingSegments: string[] = []
 
   for (;;) {
     try {
       const realTarget = await realpath(existingPath)
-      assertWithinWorkspace(realCwd, realTarget)
+      if (realCwd !== undefined) {
+        assertWithinWorkspace(realCwd, realTarget)
+      }
       return missingSegments.reduce((path, segment) => join(path, segment), realTarget)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -73,3 +80,4 @@ export async function ensureWorkspaceWritePath(cwd: string, target: string): Pro
     }
   }
 }
+

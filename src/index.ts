@@ -124,6 +124,33 @@ function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): stri
   return process.cwd()
 }
 
+/**
+ * Whether the session is currently operating under unconfined full access
+ * (`danger-full-access`). Reads the mounted `ctx.sandboxPolicy` when present,
+ * and falls back to scanning the session's event stream for `sandbox/mode`.
+ */
+export function isSessionFullAccess(ctx: Context, sessionId: string): boolean {
+  const session = ctx.sessions.get(sessionId)
+  if (session === undefined) return false
+  const sandboxPolicy = (ctx as unknown as Record<string, unknown>).sandboxPolicy as { resolve?: (req: { session?: unknown }) => { mode?: string } } | undefined
+  if (sandboxPolicy !== undefined && typeof sandboxPolicy.resolve === 'function') {
+    try {
+      const policy = sandboxPolicy.resolve({ session })
+      if (policy?.mode === 'danger-full-access') return true
+    } catch {}
+  }
+  const events = session.events
+  if (Array.isArray(events)) {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index] as { type?: unknown; data?: { mode?: unknown } }
+      if (event?.type === 'sandbox/mode') {
+        return event.data?.mode === 'danger-full-access'
+      }
+    }
+  }
+  return false
+}
+
 /** Optional repository selected by the Git panel when cwd is a container. */
 function selectedRepoOf(payload: unknown): string | undefined {
   const record = payload as { repoRoot?: unknown }
@@ -272,9 +299,10 @@ function buildApi(
       return { sessionId, cwd, root: rootLabel(cwd), parent: parentOf(cwd) ?? null }
     },
     'fs.tree': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { sessionId, cwd } = cwdOf(payload)
+      const fullAccess = isSessionFullAccess(ctx, sessionId)
       const record = payload as { path?: unknown }
-      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'))
+      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'), fullAccess)
       return listDirectory(target, resolved.listLimit)
     },
     'fs.search': async (payload) => {
@@ -286,20 +314,22 @@ function buildApi(
       return searchFiles(cwd, query)
     },
     'fs.read': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { sessionId, cwd } = cwdOf(payload)
+      const fullAccess = isSessionFullAccess(ctx, sessionId)
       // Relative paths are git-derived (status/diff report repo-root-relative
       // names; the untracked diff view reads the file through this route). A
       // child-repo path is relative to the selected repoRoot, not the session
       // cwd; thread it so the path resolves inside the authorized workspace.
       const selected = selectedRepoOf(payload)
-      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected))
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected), fullAccess)
       const { content, truncated, binary, size, head } = await readText(path, resolved.readLimit)
       if (binary) return { kind: 'binary', size, truncated, head }
       return { kind: 'text', content, truncated }
     },
     'fs.write': async (payload) => {
-      const { cwd } = cwdOf(payload)
-      const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
+      const { sessionId, cwd } = cwdOf(payload)
+      const fullAccess = isSessionFullAccess(ctx, sessionId)
+      const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'), fullAccess)
       const content = requireString(payload, 'content')
       const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
       try {
@@ -762,12 +792,14 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           throw new SidebarError('bad-request', 'sessionId, dir, and relativePath are required')
         }
         const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        const fullAccess = isSessionFullAccess(ctx, sessionId)
         const { path, size } = await writeWorkspaceUpload({
           cwd,
           dir,
           relativePath,
           chunks: req,
           limit: resolved.uploadLimit,
+          fullAccess,
         })
         writeOk(res, { path, size })
       } catch (error) {
@@ -803,7 +835,8 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
         const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-        const path = await ensureWorkspacePath(cwd, raw)
+        const fullAccess = isSessionFullAccess(ctx, sessionId)
+        const path = await ensureWorkspacePath(cwd, raw, fullAccess)
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
