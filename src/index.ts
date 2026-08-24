@@ -131,15 +131,16 @@ function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): stri
  */
 export function isSessionFullAccess(ctx: Context, sessionId: string): boolean {
   const session = ctx.sessions.get(sessionId)
-  if (session === undefined) return false
-  const sandboxPolicy = (ctx as unknown as Record<string, unknown>).sandboxPolicy as { resolve?: (req: { session?: unknown }) => { mode?: string } } | undefined
+  const sandboxPolicy = typeof ctx.get === 'function'
+    ? ctx.get('sandboxPolicy') as { resolve?: (req: { session?: unknown }) => { mode?: string } } | undefined
+    : undefined
   if (sandboxPolicy !== undefined && typeof sandboxPolicy.resolve === 'function') {
     try {
       const policy = sandboxPolicy.resolve({ session })
       if (policy?.mode === 'danger-full-access') return true
     } catch {}
   }
-  const events = session.events
+  const events = session?.events
   if (Array.isArray(events)) {
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index] as { type?: unknown; data?: { mode?: unknown } }
