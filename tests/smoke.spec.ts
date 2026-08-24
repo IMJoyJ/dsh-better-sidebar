@@ -533,6 +533,39 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
+  it('allows fs.tree, fs.read, and fs.write outside workspace in danger-full-access mode', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-fullaccess-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    const outsideFile = join(outside, 'outside-read.txt')
+    writeFileSync(outsideFile, 'hello full access')
+    try {
+      const route = mount({
+        sessions: {
+          get: () => ({
+            header: { cwd: workspace },
+            events: [{ type: 'sandbox/mode', data: { mode: 'danger-full-access' } }],
+          }),
+        },
+      })
+      const tree = await invoke(route, 'fs.tree', { sessionId: 'full-access-session', path: outside })
+      expect(tree.ok).toBe(true)
+
+      const read = await invoke(route, 'fs.read', { sessionId: 'full-access-session', path: outsideFile })
+      expect(read.ok).toBe(true)
+      expect((read as unknown as { value: { content: string } }).value.content).toBe('hello full access')
+
+      const writeFile = join(outside, 'outside-write.txt')
+      const write = await invoke(route, 'fs.write', { sessionId: 'full-access-session', path: writeFile, content: 'written outside' })
+      expect(write.ok).toBe(true)
+      expect(readFileSync(writeFile, 'utf8')).toBe('written outside')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('rejects media and HTML reads through a workspace symlink', async () => {
     if (!canCreateSymlink) return
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-route-symlink-security-'))
