@@ -41,6 +41,8 @@ export interface WorkspaceUploadInput {
   limit: number
   /** Whether workspace containment is enforced (the `workspaceFence` setting; on by default). */
   fence?: boolean
+  /** When true (danger-full-access), bypass workspace containment. */
+  fullAccess?: boolean
 }
 
 /**
@@ -55,9 +57,9 @@ export interface WorkspaceUploadInput {
  * failures; the temp file is always removed on failure.
  */
 export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise<{ path: string; size: number }> {
-  const { cwd, dir, relativePath, chunks, limit, fence = true } = input
+  const { cwd, dir, relativePath, chunks, limit, fence = true, fullAccess = false } = input
   const base = requireAbsolute(dir)
-  await ensureWorkspacePath(cwd, base, fence)
+  await ensureWorkspacePath(cwd, base, fence, fullAccess)
   if (relativePath === '' || relativePath.startsWith('/') || relativePath.startsWith('\\')) {
     throw new SidebarError('bad-request', 'relativePath must stay below the upload directory', 400)
   }
@@ -66,7 +68,7 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
     throw new SidebarError('bad-request', 'relativePath must stay below the upload directory', 400)
   }
   const target = join(base, ...segments)
-  const safeTarget = await ensureWorkspaceWritePath(cwd, target, fence)
+  const safeTarget = await ensureWorkspaceWritePath(cwd, target, fence, fullAccess)
   const tmp = join(dirname(safeTarget), `.${basename(safeTarget)}.dsh-upload-${randomUUID()}.tmp`)
   await mkdir(dirname(safeTarget), { recursive: true })
   const stream = createWriteStream(tmp, { flags: 'wx' })
