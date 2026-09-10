@@ -160,7 +160,9 @@ export function isSessionFullAccess(ctx: Context, sessionId: string): boolean {
       if (policy?.mode === 'danger-full-access') return true
     } catch {}
   }
-  const events = session?.events
+  const events = typeof session?.snapshotEvents === 'function'
+    ? session.snapshotEvents()
+    : (session as { events?: unknown } | undefined)?.events
   if (Array.isArray(events)) {
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index] as { type?: unknown; data?: { mode?: unknown } }
