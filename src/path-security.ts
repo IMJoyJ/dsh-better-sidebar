@@ -14,6 +14,33 @@ async function resolveRealPath(path: string, label: string): Promise<string> {
   }
 }
 
+/**
+ * Canonicalize a write destination through its nearest existing ancestor,
+ * without any containment check. Missing trailing segments are re-appended
+ * to the canonical ancestor, so an existing symlink is never left in the
+ * returned path. Throws when no ancestor exists or resolution fails.
+ */
+async function resolveWriteTarget(absolute: string): Promise<string> {
+  let existingPath = absolute
+  const missingSegments: string[] = []
+  for (;;) {
+    try {
+      const realTarget = await realpath(existingPath)
+      return missingSegments.reduce((path, segment) => join(path, segment), realTarget)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new SidebarError('fs-error', `cannot resolve target "${existingPath}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      }
+      const parent = dirname(existingPath)
+      if (parent === existingPath) {
+        throw new SidebarError('fs-error', `cannot resolve target "${absolute}"`, 400)
+      }
+      missingSegments.unshift(basename(existingPath))
+      existingPath = parent
+    }
+  }
+}
+
 /** Reject a resolved path whose real filesystem target escapes the workspace. */
 function assertWithinWorkspace(workspace: string, target: string): void {
   if (!isWithin(workspace, target)) {
@@ -63,7 +90,7 @@ export async function ensureWorkspacePath(cwd: string, target: string, fence = t
 export async function ensureWorkspaceWritePath(cwd: string, target: string, fence = true, fullAccess = false): Promise<string> {
   const absolute = requireAbsolute(resolveSessionPath(cwd, target))
   if (fullAccess) {
-    return resolveRealPath(absolute, 'target')
+    return resolveWriteTarget(absolute)
   }
   const realCwd = await resolveRealPath(cwd, 'workspace')
   let existingPath = absolute

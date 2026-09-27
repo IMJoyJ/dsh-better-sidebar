@@ -36,7 +36,7 @@ interface FakeContext {
     register: (route: SidebarWebRoute) => () => void
     registerUpgrade: (route: SidebarWebUpgradeRoute) => () => void
   }
-  sessions: { get: (id: string) => { header: { cwd?: string } } | undefined }
+  sessions: { get: (id: string) => { header: { cwd?: string }; snapshotEvents?: () => readonly unknown[] } | undefined }
   tools: { register: (tool: unknown) => () => void }
   effect: (fn: () => void | (() => void), label?: string) => void
   /** The session/agent event feeds: nothing emits in these tests. */
@@ -546,7 +546,7 @@ describe('session cwd resolution over the API route', () => {
         sessions: {
           get: () => ({
             header: { cwd: workspace },
-            events: [{ type: 'sandbox/mode', data: { mode: 'danger-full-access' } }],
+            snapshotEvents: () => [{ type: 'sandbox/mode', data: { mode: 'danger-full-access' } }],
           }),
         },
       })
